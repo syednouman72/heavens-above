@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+ app:
+   container_name: nouman-above-container
+   build:
+     context: .
+     dockerfile: Dockerfile
+   restart: always
+   ports:
+     - "1172:3000"
+   pull_policy: build
