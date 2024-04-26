@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: satellite.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: satellite.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>/**
+ * Module for scraping satellite pass data from the Heavens Above website.
+ * @module satellite
+ */
+
+const request = require("request");
+const cheerio = require("cheerio");
+const fs = require("fs");
+const utils = require("./utils");
+
+/**
+ * Array containing the property names used in the data object.
+ * @constant
+ * @type {string[]}
+ */
+const property = ["url", "date", "brightness", "events", "passType", "image", "scoreData", "exist", "score", "id"];
+
+/**
+ * Array containing the names of the events for satellite passes.
+ * @constant
+ * @type {string[]}
+ */
+const events = ["rise", "reachAltitude10deg", "highestPoint", "dropBelowAltitude10deg", "set", "exitShadow", "enterShadow"];
+
+/**
+ * Array containing the attribute names for satellite pass events.
+ * @constant
+ * @type {string[]}
+ */
+const attribute = ["time", "altitude", "azimuth", "distance", "brightness", "sunAltitude"];
+
+/**
+ * Array containing comparison functions used for sorting the database.
+ * @constant
+ * @type {function[]}
+ */
+const compare = [
+	function(a, b) {
+		return a[property[6]][1] >= b[property[6]][1] ? 1 : -1; // Brightness (lower is better)
+	},
+	function(a, b) {
+		return a[property[6]][2] >= b[property[6]][2] ? 1 : -1; // Sun altitude (lower is better)
+	},
+	function(a, b) {
+		return a[property[6]][3] &lt;= b[property[6]][3] ? 1 : -1; // Satellite altitude (higher is better)
+	},
+	function(a, b) {
+		return a[property[7]] &lt;= b[property[7]] ? 1 : -1; // Duration (higher is better)
+	}
+];
+
+/**
+ * Array containing the weights for each comparison function.
+ * @constant
+ * @type {number[]}
+ */
+const weight = [9.5, 6, 6.5, 6.5];
+
+/**
+ * Retrieves satellite pass data from the Heavens Above website.
+ * @param {Object} config - Configuration object.
+ * @param {Array} config.database - The database array to store retrieved data.
+ * @param {number} config.counter - The counter for tracking the number of requests.
+ * @param {string} config.opt - The URL parameters for the request.
+ * @param {string} config.root - The root directory for storing data.
+ * @param {number} config.target - The target satellite ID.
+ * @param {number} config.pages - The number of pages to retrieve.
+ */
+function getTable(config) {
+	let database = config.database || [];
+	let counter = config.counter || 0;
+	const opt = config.opt || 0;
+	const basedir = `${config.root}satellite${config.target}/`;
+	if (counter === 0) {
+		options = utils.get_options(`PassSummary.aspx?satid=${config.target}&amp;`);
+		if (!fs.existsSync(basedir)) {
+			fs.mkdir(basedir, (err) => {
+				if (err) console.log(err);
+			});
+		}
+	} else {
+		options = utils.post_options(`PassSummary.aspx?satid=${config.target}&amp;`, opt);
+	}
+	request(options, (error, response, body) => {
+		if (error || response.statusCode !== 200) return;
+		const $ = cheerio.load(body, {
+			decodeEntities: false
+		});
+		let next = "__EVENTTARGET=&amp;__EVENTARGUMENT=&amp;__LASTFOCUS=";
+		const tbody = $("form").find("table.standardTable tbody");
+		const queue = [];
+		tbody.find("tr").each((i, o) => {
+			queue.push({
+				[property[0]]: "https://www.heavens-above.com/" + $(o).find("td").eq(0).find("a").attr("href").replace("type=V", "type=A"),
+				[property[1]]: $(o).find("td").eq(0).find("a").text(),
+				[property[2]]: $(o).find("td").eq(1).text(),
+				[property[3]]: {},
+				[property[4]]: $(o).find("td").eq(11).text()
+			});
+		});
+		function factory(temp) {
+			return new Promise((resolve, reject) => {
+				request(utils.image_options(temp[property[0]]), (error, response, body) => {
+                    if (error || response.statusCode !== 200) {
+						reject(error);
+						return;
+					}
+                    console.log("Success", temp);
+
+                    const $ = cheerio.load(body, {
+						decodeEntities: false
+					}); //防止i - shift === 2触发两次的问题
+
+                    const table = $("form").find("table.standardTable");
+                    const tbody = table.find("tbody");
+                    let shift = 0;
+					let flag = false;
+					const data = [];
+                    for (let i = 0; i &lt; tbody.find("tr").length; i++) {
+						if (tbody.find("tr").eq(i).find("td").eq(0).text() === "离开地影") { //Exits shadow
+							temp[property[3]][events[5]] = {};
+							current = temp[property[3]][events[5]];
+							shift++;
+						} else if (tbody.find("tr").eq(i).find("td").eq(0).text() === "进入地影") { //Enters shadow
+							temp[property[3]][events[6]] = {};
+							current = temp[property[3]][events[6]];
+							shift++;
+						} else {
+							temp[property[3]][events[i - shift]] = {};
+							current = temp[property[3]][events[i - shift]];
+						}
+						for (let j = 0; j &lt; 6; j++) {
+							current[attribute[j]] = tbody.find("tr").eq(i).find("td").eq(j + 1).text();
+						}
+						if (i - shift === 2 &amp;&amp; !flag) { //防止因为网站上表格顺序打乱而获得错误的数据
+							flag = true;
+							data[0] = parseInt(current[attribute[0]].split(":")[0]);
+							data[1] = parseFloat(current[attribute[4]]);
+							data[2] = parseFloat(current[attribute[5]].split("°")[0]);
+							data[3] = parseInt(current[attribute[1]].split("°")[0]);
+						}
+					}
+                    const startTime = utils.getTimestamp(temp[property[3]][events[5]] ? temp[property[3]][events[5]][attribute[0]] : temp[property[3]][events[1]][attribute[0]]);
+                    const endTime = utils.getTimestamp(temp[property[3]][events[6]] ? temp[property[3]][events[6]][attribute[0]] : temp[property[3]][events[3]][attribute[0]]);
+                    temp[property[5]] = "https://www.heavens-above.com/" + $("#ctl00_cph1_imgViewFinder").attr("src") //.replace("size=800", "size=1600");
+                    temp[property[6]] = data;
+                    temp[property[7]] = endTime - startTime;
+                    temp[property[8]] = 0;
+                    const id = utils.md5(Math.random().toString()); //temp[property[1]] + temp[property[7]];
+                    temp[property[9]] = id;
+                    fs.appendFile(basedir + id + ".html", table.html(), (err) => {
+						if (err) console.log(err);
+					}); //保存表格
+                    request.get(utils.image_options(temp[property[5]])).pipe(fs.createWriteStream(basedir + id + ".png", {
+						"flags": "a"
+					})).on("error", (err) => {
+						console.error(err);
+					}); //下载图片
+                    resolve(temp);
+                });
+			});
+		}
+		Promise.allSettled(queue.map(temp => factory(temp))).then(results => {
+			results = results.filter(p => p.status === "fulfilled").map(p => p.value);
+			database = database.concat(results);
+			$("form").find("input").each((i, o) => {
+				if ($(o).attr("name") === "ctl00$cph1$btnPrev" || $(o).attr("name") === "ctl00$cph1$visible") return;
+				else next += `&amp;${$(o).attr("name")}=${$(o).attr("value")}`;
+			});
+			next += "&amp;ctl00$cph1$visible=radioVisible";
+			next = next.replace(/\+/g, "%2B").replace(/\//g, "%2F") //.replace(/\$/g, "%24");
+			if (counter++ &lt; config.pages) {
+				getTable({
+					target: config.target,
+					pages: config.pages,
+					root: config.root,
+					counter,
+					opt: next,
+					database
+				});
+			} else {
+				for (let i = 0; i &lt; 4; i++) {
+					database.sort(compare[i]);
+					database = database.map((ele, index) => {
+						ele[property[8]] += 100 * (1 - index / database.length) * weight[i];
+						return ele;
+					});
+				}
+				database = database.map((ele, index) => {
+					if (isNaN(ele[property[6]][1])) {
+						ele[property[8]] = 0;
+						return ele;
+					} //上中天没有星等直接归零
+					if (ele[property[6]][0] >= 17 &amp;&amp; ele[property[6]][0] &lt;= 19) {
+						ele[property[8]] += 850;
+					} else if (ele[property[6]][0] >= 20 &amp;&amp; ele[property[6]][0] &lt;= 23) {
+						ele[property[8]] += 950;
+					} else if (ele[property[6]][0] >= 0 &amp;&amp; ele[property[6]][0] &lt;= 3) {
+						ele[property[8]] += 400;
+					} else if (ele[property[6]][0] >= 4 &amp;&amp; ele[property[6]][0] &lt;= 6) {
+						ele[property[8]] += 300;
+					}
+					ele[property[8]] = Math.floor(ele[property[8]] / 40);
+					return ele;
+				});
+				database.sort((a, b) => {
+					return a[property[8]] &lt;= b[property[8]] ? 1 : -1; //分数
+				});
+				fs.appendFile(basedir + "index.json", JSON.stringify(database), (err) => {
+					if (err) console.log(err);
+				});
+			}
+		});
+	});
+}
+
+exports.getTable = getTable;
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Modules</h3><ul><li><a href="module-iridium.html">iridium</a></li><li><a href="module-satellite.html">satellite</a></li><li><a href="module-utils.html">utils</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.2</a> on Fri Apr 26 2024 10:13:04 GMT+0000 (Coordinated Universal Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
