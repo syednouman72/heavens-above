@@ -1,0 +1,17 @@
+name: Scheduled Tasks
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Runs daily at midnight UTC time
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Add your specific tasks here
+      - name: Run data backup script
+        run: npm run backup  # Adjust the command to run your backup script
