@@ -1,10 +1,28 @@
+/**
+ * Module for scraping Iridium Flares data from the Heavens Above website.
+ * @module iridium
+ */
+
 const request = require("request");
 const cheerio = require("cheerio");
 const fs = require("fs");
 const utils = require("./utils");
 
+/**
+ * Array containing the names of the events for Iridium Flares.
+ * @constant
+ * @type {string[]}
+ */
 const eventsIridium = ["brightness", "altitude", "azimuth", "satellite", "distanceToFlareCentre", "brightnessAtFlareCentre", "date", "time", "distanceToSatellite", "AngleOffFlareCentre-line", "flareProducingAntenna", "sunAltitude", "angularSeparationFromSun", "image", "id"];
 
+/**
+ * Retrieves Iridium Flares data from the Heavens Above website.
+ * @param {Object} config - Configuration object.
+ * @param {Array} config.database - The database array to store retrieved data.
+ * @param {number} config.counter - The counter for tracking the number of requests.
+ * @param {string} config.opt - The URL parameters for the request.
+ * @param {string} config.root - The root directory for storing data.
+ */
 function getTable(config) {
 	let database = config.database || [];
 	let counter = config.counter || 0;

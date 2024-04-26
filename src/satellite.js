@@ -1,28 +1,71 @@
+/**
+ * Module for scraping satellite pass data from the Heavens Above website.
+ * @module satellite
+ */
+
 const request = require("request");
 const cheerio = require("cheerio");
 const fs = require("fs");
 const utils = require("./utils");
 
+/**
+ * Array containing the property names used in the data object.
+ * @constant
+ * @type {string[]}
+ */
 const property = ["url", "date", "brightness", "events", "passType", "image", "scoreData", "exist", "score", "id"];
+
+/**
+ * Array containing the names of the events for satellite passes.
+ * @constant
+ * @type {string[]}
+ */
 const events = ["rise", "reachAltitude10deg", "highestPoint", "dropBelowAltitude10deg", "set", "exitShadow", "enterShadow"];
+
+/**
+ * Array containing the attribute names for satellite pass events.
+ * @constant
+ * @type {string[]}
+ */
 const attribute = ["time", "altitude", "azimuth", "distance", "brightness", "sunAltitude"];
 
+/**
+ * Array containing comparison functions used for sorting the database.
+ * @constant
+ * @type {function[]}
+ */
 const compare = [
 	function(a, b) {
-		return a[property[6]][1] >= b[property[6]][1] ? 1 : -1; //星等（越小越好）
+		return a[property[6]][1] >= b[property[6]][1] ? 1 : -1; // Brightness (lower is better)
 	},
 	function(a, b) {
-		return a[property[6]][2] >= b[property[6]][2] ? 1 : -1; //太阳高度（越小越好）
+		return a[property[6]][2] >= b[property[6]][2] ? 1 : -1; // Sun altitude (lower is better)
 	},
 	function(a, b) {
-		return a[property[6]][3] <= b[property[6]][3] ? 1 : -1; //卫星高度（越大越好）
+		return a[property[6]][3] <= b[property[6]][3] ? 1 : -1; // Satellite altitude (higher is better)
 	},
 	function(a, b) {
-		return a[property[7]] <= b[property[7]] ? 1 : -1; //持续时间（越大越好）
+		return a[property[7]] <= b[property[7]] ? 1 : -1; // Duration (higher is better)
 	}
 ];
+
+/**
+ * Array containing the weights for each comparison function.
+ * @constant
+ * @type {number[]}
+ */
 const weight = [9.5, 6, 6.5, 6.5];
 
+/**
+ * Retrieves satellite pass data from the Heavens Above website.
+ * @param {Object} config - Configuration object.
+ * @param {Array} config.database - The database array to store retrieved data.
+ * @param {number} config.counter - The counter for tracking the number of requests.
+ * @param {string} config.opt - The URL parameters for the request.
+ * @param {string} config.root - The root directory for storing data.
+ * @param {number} config.target - The target satellite ID.
+ * @param {number} config.pages - The number of pages to retrieve.
+ */
 function getTable(config) {
 	let database = config.database || [];
 	let counter = config.counter || 0;
